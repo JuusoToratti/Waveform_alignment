@@ -5,6 +5,10 @@ from matplotlib.ticker import EngFormatter
 from matplotlib.widgets import Button
 from scipy.signal import find_peaks
 import os
+#tiedosto nimen lyhennys
+def short_name(fname, maxlen=25):
+    base = os.path.basename(fname)
+    return base if len(base) <= maxlen else base[:maxlen-3] + "..."
 
 # ---------------------------------------------------------
 # TIEDOSTOT
@@ -60,6 +64,40 @@ NOISE_FILTER_METHOD = 'savgol'  # 'savgol', 'median', 'moving_avg', tai 'none'
 NOISE_FILTER_WINDOW = 11        # Ikkunan koko (pariton luku suositellaan)
 NOISE_FILTER_POLYORDER = 3      # Polynomin aste (vain savgol)
 
+#----------------------------------------------
+#Kohinan poiston apufunktio vain tasaiset reunat
+#----------------------------------------------
+def smart_filter(t, v, rising_edges, falling_edges, window=11, polyorder=3, guard_ns=200):
+    """
+    Suodattaa kohinaa, mutta EI koske reunoihin.
+    - rising_edges, falling_edges = listat reuna-ajoista
+    - guard_ns = alue, jota EI suodateta (ns molemmin puolin)
+    """
+
+    t = np.asarray(t)
+    v = np.asarray(v).copy()
+
+    # Reunojen ympärille EI suodateta
+    guard_s = guard_ns * 1e-9
+
+    protected_mask = np.zeros(len(t), dtype=bool)
+
+    # Merkitään alueet, joita ei saa suodattaa
+    for edge in np.concatenate((rising_edges, falling_edges)):
+        mask = (t >= edge - guard_s) & (t <= edge + guard_s)
+        protected_mask |= mask
+
+    # Suodatetaan kopio vain niiltä alueilta, joihin saa koskea
+    v_filtered = remove_noise(t, v, method='savgol', window=window, polyorder=polyorder)
+
+    # Korvataan vain sallitut kohdat
+    for i in range(len(v)):
+        if not protected_mask[i]:
+            v[i] = v_filtered[i]
+
+    return v
+
+
 # ---------------------------------------------------------
 # DATAN LUKEMINEN – ROBUSTI HEADER-ETSINTÄ
 # ---------------------------------------------------------
@@ -109,6 +147,7 @@ original_sim_time  = sim_df["Time"].copy()
 # Sovella kohinanpoistoa
 original_meas_v_raw = meas_df["Voltage"].copy()
 original_sim_v_raw = sim_df[next(c for c in sim_df.columns if "INC74024" in str(c))].copy()
+original_meas_v = original_meas_v_raw.copy()
 
 # Automaattinen optimointi jos pyydetty
 if NOISE_FILTER_METHOD == 'auto_optimize' and AUTO_OPTIMIZE_TARGET == 'sim':
@@ -131,13 +170,10 @@ else:
     actual_method = NOISE_FILTER_METHOD
 
 original_meas_v = remove_noise(original_meas_time, original_meas_v_raw, 
-                                method=actual_method, 
-                                window=NOISE_FILTER_WINDOW,
-                                polyorder=NOISE_FILTER_POLYORDER)
-original_sim_v = remove_noise(original_sim_time, original_sim_v_raw,
-                               method=actual_method,
-                               window=NOISE_FILTER_WINDOW,
-                               polyorder=NOISE_FILTER_POLYORDER)
+                               method=actual_method, 
+                              window=NOISE_FILTER_WINDOW,
+                             polyorder=NOISE_FILTER_POLYORDER)
+original_sim_v = original_sim_v_raw.copy()#tämä ei suodata nyt simuloitua käyrää
 
 # Muunna takaisin pandas Seriesiksi jos tarpeen
 if hasattr(original_meas_v_raw, 'index'):
@@ -237,7 +273,7 @@ def fft_frequency_estimate(t, v):
     dt_array = np.diff(t)
     dt_array = dt_array[dt_array > 0]
     if len(dt_array) == 0:
-        print("⚠ FFT ERROR: dt ei kelpaa → freq=0")
+        print(" FFT ERROR: dt ei kelpaa → freq=0")
         return 0.0
 
     dt = np.mean(dt_array)
@@ -248,7 +284,7 @@ def fft_frequency_estimate(t, v):
     freqs = np.fft.rfftfreq(len(v), dt)
 
     if np.max(spectrum) < 1e-12:
-        print("⚠ FFT ERROR: signaali tasainen → freq=0")
+        print(" FFT ERROR: signaali tasainen → freq=0")
         return 0.0
 
     # Etsi huippu (DC ohitetaan)
@@ -266,46 +302,48 @@ def calculate_params(t, v):
     t = np.asarray(t)
     v = np.asarray(v)
 
-    # --------------------------------------------------
     # PERUSTASOT
-    # --------------------------------------------------
     v_min = v.min()
     v_max = v.max()
     delta = v_max - v_min
     th50 = v_min + 0.5 * delta
-    l10  = v_min + 0.1 * delta
-    l90  = v_min + 0.9 * delta
+    l10 = v_min + 0.1 * delta
+    l90 = v_min + 0.9 * delta
 
-    # --------------------------------------------------
-    # REUNAT (sama kuin ennen)
-    # --------------------------------------------------
+    # REUNAT
     rising = find_transition_times(t, v, th50, rising=True)
     falling = find_transition_times(t, v, th50, rising=False)
 
-    # --------------------------------------------------
-    # EDGE-BASED FREQUENCY
-    # --------------------------------------------------
+    # EDGE-BASED FREQUENCY (Tarvitaan Fall Time ja Settling Time rajoituksiin)
     if len(falling) > 1:
         periods = np.diff(falling)
         periods = periods[periods > 0]
-        freq_kHz = 1.0 / np.mean(periods) / 1e3 if len(periods) else fft_frequency_estimate(t, v)
+        freq_s = np.mean(periods) if len(periods) else np.nan
+        freq_kHz = 1.0 / freq_s / 1e3 if freq_s else fft_frequency_estimate(t, v)
     else:
+        freq_s = np.nan
         freq_kHz = fft_frequency_estimate(t, v)
+    
+    # Aseta dynaaminen aikaraja jaksonajan perusteella (tai maksimi)
+    max_edge_time_s = 50e-6 # 50 us on turvallinen maksimi I2C:lle
 
-    # --------------------------------------------------
-    # RISE / FALL TIME 
-    # --------------------------------------------------
-    rise10  = find_transition_times(t, v, l10, rising=True)
-    rise90  = find_transition_times(t, v, l90, rising=True)
-    fall10  = find_transition_times(t, v, l10, rising=False)
-    fall90  = find_transition_times(t, v, l90, rising=False)
+    # Jos taajuus tiedossa, käytä puolta jaksoa
+    if not np.isnan(freq_s):
+        max_edge_time_s = min(freq_s / 2.0, max_edge_time_s)
+
+    # RISE / FALL TIME
+    rise10 = find_transition_times(t, v, l10, rising=True)
+    rise90 = find_transition_times(t, v, l90, rising=True)
+    fall10 = find_transition_times(t, v, l10, rising=False)
+    fall90 = find_transition_times(t, v, l90, rising=False)
 
     rise_times = []
     for t10 in rise10:
         cand = rise90[rise90 > t10]
         if len(cand):
             dt = cand[0] - t10
-            if 0 < dt < 1e-3:
+            # KORJattu: Käytä dynaamista maksimirajaa
+            if 0 < dt < max_edge_time_s: 
                 rise_times.append(dt)
     rise_time = np.mean(rise_times) if rise_times else np.nan
 
@@ -314,58 +352,59 @@ def calculate_params(t, v):
         cand = fall10[fall10 > t90]
         if len(cand):
             dt = cand[0] - t90
-            if 0 < dt < 1e-3:
+            # KORJattu: Käytä dynaamista maksimirajaa
+            if 0 < dt < max_edge_time_s: 
                 fall_times.append(dt)
     fall_time = np.mean(fall_times) if fall_times else np.nan
 
-    # --------------------------------------------------
-    # UUSI SLEW RATE (MAX dV/dt)
-    # --------------------------------------------------
+    # UUSI SLEW RATE (Jätetään ennalleen)
+    # ... (slew rate laskenta) ...
     dv = np.diff(v)
-    dt = np.diff(t)
-
-    dt[dt == 0] = np.min(dt[dt > 0])  # nollasuojus
-
-    slope = dv / dt     # V/s
-
-    # Rising only (slope > 0)
+    dt_diff = np.diff(t)
+    dt_diff[dt_diff == 0] = np.min(dt_diff[dt_diff > 0])
+    slope = dv / dt_diff
     slope_rise = slope[slope > 0]
-    # Falling only (slope < 0)
-    slope_fall = -slope[slope < 0]   # käännetään positiiviseksi
-
-    # Jos ei löydy slope-arvoja
+    slope_fall = -slope[slope < 0]
     slew_rate_rise = np.max(slope_rise) if len(slope_rise) else np.nan
     slew_rate_fall = np.max(slope_fall) if len(slope_fall) else np.nan
 
-    # --------------------------------------------------
-    # Overshoot / Undershoot
-    # --------------------------------------------------
+    # Overshoot / Undershoot (Jätetään ennalleen)
     V_high = np.nanmean(v[v > th50])
     V_low = np.nanmean(v[v <= th50])
-
     overshoot_pct = ((v_max - V_high) / delta * 100) if delta else 0
     undershoot_pct = ((V_low - v_min) / delta * 100) if delta else 0
 
-    # --------------------------------------------------
-    # Settling time
-    # --------------------------------------------------
+    # KORJATTU SETTLING TIME
     band = 0.05 * delta
-    if len(falling) > 0:
-        t_after = t >= falling[0]
-        deviations = np.abs(v[t_after] - V_low)
-        exceed = np.where(deviations > band)[0]
-        settling_ns = t[t_after][exceed[-1]] * 1e9 if len(exceed) else 0.0
-    else:
-        settling_ns = 0.0
+    settling_times = []
+    
+    # Tarkista asettuminen jokaisen reunan jälkeen erikseen
+    for t_fall_start in falling:
+        # Tarkkailuikkuna, esim. 2 x jaksonaika reunan jälkeen
+        t_max = t_fall_start + max_edge_time_s * 2 
+        
+        mask = (t >= t_fall_start) & (t <= t_max)
+        t_win = t[mask]
+        v_win = v[mask]
 
-    # --------------------------------------------------
-    # DUTY CYCLE
-    # --------------------------------------------------
+        if len(t_win) < 2: continue
+
+        deviations = np.abs(v_win - V_low)
+        exceed_indices = np.where(deviations > band)[0]
+        
+        if len(exceed_indices) > 0:
+            # Viimeinen poikkeama toleranssista
+            t_settle_abs = t_win[exceed_indices[-1]] 
+            # Asettumisaika suhteessa reunan alkuun
+            settling_times.append(t_settle_abs - t_fall_start)
+
+    settling_time = np.mean(settling_times) if settling_times else 0.0
+    settling_ns = settling_time * 1e9
+
+    # DUTY CYCLE (Jätetään ennalleen)
     duty = np.mean(v > th50) * 100
 
-    # --------------------------------------------------
     # PALAUTUS
-    # --------------------------------------------------
     return {
         "V_high": V_high,
         "V_low": V_low,
@@ -381,7 +420,6 @@ def calculate_params(t, v):
         "undershoot_%": undershoot_pct,
         "settling_ns": settling_ns
     }
-
 # ---------------------------------------------------------
 # APUFUNKTIO: Automaattinen yksikön skaalaus
 # ---------------------------------------------------------
@@ -424,6 +462,16 @@ meas_rising  = find_transition_times(original_meas_time, original_meas_v, meas_t
 meas_falling = find_transition_times(original_meas_time, original_meas_v, meas_threshold50)
 sim_rising   = find_transition_times(original_sim_time, original_sim_v, sim_threshold50,rising=True)
 sim_falling  = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=False)
+# Edge-aware suodatus
+original_meas_v = smart_filter(
+    original_meas_time,
+    original_meas_v_raw,
+    rising_edges=meas_rising,
+    falling_edges=meas_falling,
+    window=NOISE_FILTER_WINDOW,
+    polyorder=NOISE_FILTER_POLYORDER,
+    guard_ns=200
+)
 
 # Non-monotonicity detection
 nonmono_meas_cnt, nonmono_meas_mark = detect_non_monotonicity(
@@ -449,6 +497,7 @@ sr_rise_sim_val, sr_rise_sim_unit = format_slew_rate(p_sim['slew_rate_rise'])
 sr_fall_sim_val, sr_fall_sim_unit = format_slew_rate(p_sim['slew_rate_fall'])
 
 params_text = f"""Waveform parameters (SDA INC74024)
+
 
 Parameter             Meas.          Sim.
 ---------------------------------------------------
@@ -493,77 +542,81 @@ def update_plot(meas_edge_time, edge_type, edge_num):
 
     current_edge_time = meas_edge_time
 
-    # --- 1. Selvitä simulaation vastaava reuna
+    # --- 1. Selvitä simulaation vastaava reuna ---
     if edge_type == "falling":
         sim_edge = find_closest_sim_edge(meas_edge_time, sim_falling)
+        fallback_edges = sim_falling
     else:
         sim_edge = find_closest_sim_edge(meas_edge_time, sim_rising)
+        fallback_edges = sim_rising
 
-    # Jos reunaa ei löydy, käytetään edellistä offsetia
+    # --- 2. Jos vastaavaa sim-reunaa ei löydy ---
     if sim_edge is None:
-        sim_edge = meas_edge_time + current_sim_offset
+        if len(fallback_edges) > 0:
+            # fallback: simulaation ensimmäinen saman tyypin reuna
+            sim_edge = fallback_edges[0]
+            current_sim_offset = sim_edge - meas_edge_time
+        else:
+            # jos simulaatiossa ei ole reunoja lainkaan
+            sim_edge = 0.0
+            current_sim_offset = 0.0
     else:
+        # Normaalisti päivitä offset
         current_sim_offset = sim_edge - meas_edge_time
 
-    # --- 2. Manuaalinen offset mittaukselle
+    # --- 3. Manuaalinen offset mittaukselle ---
     total_meas_offset = manual_meas_offset if manual_mode else 0.0
 
-    # --- 3. Kohdista reunat
-    # MUUTOS: Asetetaan molemmat valitut reunat kohtaan t=0
+    # --- 4. Kohdista signaalit niin että reuna = 0 ---
     sim_shifted = original_sim_time - sim_edge
     meas_shifted = original_meas_time - meas_edge_time + total_meas_offset
 
-    # --- 4. POISTETTU ylimääräinen siirto ---
-    # Tämä siirto aiheutti sen, että simulaation alku (ei reuna)
-    # meni nollaan.
-    # sim_min = sim_shifted.min()
-    # sim_shifted = sim_shifted - sim_min
-    # meas_shifted = meas_shifted - sim_min
-    # ----------------------------------------
-
-    # --- 5. Piirto
+    # --- 5. Piirto ---
     ax.cla()
 
-    ax.plot(meas_shifted, original_meas_v,
-            color="red", linewidth=2.5, label="Mitattu SDA", alpha=0.9)
+    ax.plot(
+    meas_shifted, original_meas_v,
+    color="red", linewidth=2.5,
+    label=f"Meas SDA ({short_name(meas_file)})",
+    alpha=0.9)
 
-    ax.plot(sim_shifted, original_sim_v,
-            color="blue", linewidth=2, label="Simuloitu SDA", alpha=0.9)
+    ax.plot(
+    sim_shifted, original_sim_v,
+    color="blue", linewidth=2,
+    label=f"Sim SDA ({short_name(sim_file)})",
+    alpha=0.9)
 
-    # Raakadata haaleana vertailuun
-    if NOISE_FILTER_METHOD != 'none':
-        # MUUTOS: Poistettu '- sim_min'
-        meas_raw_shifted = original_meas_time - meas_edge_time + total_meas_offset
-        ax.plot(meas_raw_shifted, original_meas_v_raw,
-                color="red", linewidth=0.8, alpha=0.3, linestyle=':',
-                label="Raaka mitattu (kohinainen)")
+    # Raakadata
+    #if NOISE_FILTER_METHOD != 'none':
+     #   meas_raw_shifted = original_meas_time - meas_edge_time + total_meas_offset
+      #  ax.plot(meas_raw_shifted, original_meas_v_raw,
+       #         color="red", linewidth=0.8, alpha=0.3, linestyle=':',
+        #        label="Raaka mitattu (kohinainen)")
 
-    # Piirrä muut simulaatiosarakkeet haaleina
+    # Muut simulaatiosarakkeet haaleina
     for col in sim_df.columns:
         if col not in ["Time", sim_sda_col]:
             ax.plot(sim_shifted, sim_df[col],
                     color="lightgray", alpha=0.3, linewidth=0.6)
 
-    # --- 6. Non-monotonic markers
+    # Non-monotonic markers
     if nonmono_meas_mark:
-        # MUUTOS: Poistettu '- sim_min'
         tm = [x - meas_edge_time + total_meas_offset for x, y in nonmono_meas_mark]
         vm = [y for x, y in nonmono_meas_mark]
         ax.scatter(tm, vm, marker='o', s=80, color="red",
                    zorder=6, edgecolor="white", linewidth=1.5)
 
     if nonmono_sim_mark:
-        # MUUTOS: Poistettu '- sim_min'
         ts = [x - sim_edge for x, y in nonmono_sim_mark]
         vs = [y for x, y in nonmono_sim_mark]
         ax.scatter(ts, vs, marker='o', s=60, color="magenta",
                    zorder=6, edgecolor="white", linewidth=1)
 
-    # --- 7. Akseliasetukset
+    # --- Akseliasetukset ---
     ax.xaxis.set_major_formatter(EngFormatter(unit='s'))
     ax.yaxis.set_major_formatter(EngFormatter(unit='V'))
-    ax.set_xlabel("Aika (kohdistettu reunaan t=0)", fontsize=11) # Selite päivitetty
-    ax.set_ylabel("Jännite", fontsize=11)
+    ax.set_xlabel("Aika (kohdistettu reunaan t=0)", fontsize=11)
+    ax.set_ylabel("Voltage", fontsize=11)
 
     time_diff_ns = current_sim_offset * 1e9
     title_suffix = f" [MANUAL: {manual_meas_offset*1e9:.1f} ns]" if manual_mode else ""
@@ -580,7 +633,7 @@ def update_plot(meas_edge_time, edge_type, edge_num):
         framealpha=0.95
     )
 
-    # --- 8. Parametritaulukko
+    # Parametritaulukko
     ax_params.cla()
     ax_params.axis('off')
     ax_params.text(
@@ -592,14 +645,12 @@ def update_plot(meas_edge_time, edge_type, edge_num):
                   facecolor="lightblue", alpha=0.95)
     )
 
-    # --- 9. MUUTOS: Näkymän rajaus (Zoom) ---
-    # Käytetään koodin alussa määriteltyä 'view_window'-muuttujaa
-    # ja keskitetään näkymä kohdistettuun reunaan (t=0).
-    # 'Full View' -nappi poistaa tämän zoomauksen.
+    # Näkymän rajaus
     ax.set_xlim(-view_window / 2, view_window / 2)
-    # -----------------------------------------
 
     fig.canvas.draw_idle()
+
+
     
 
 # ---------------------------------------------------------
@@ -697,39 +748,46 @@ else:
 ax_prev_f = plt.axes([0.05, 0.03, 0.13, 0.055])
 b_prev_f = Button(ax_prev_f, '← Prev Falling')
 def prev_f(event):
-    global current_falling_idx
+    global current_falling_idx, manual_mode, manual_meas_offset
     if current_falling_idx > 0:
         current_falling_idx -= 1
+        manual_mode = False  # Nollaa manuaalinen tila
+        manual_meas_offset = 0.0  # Nollaa offset
         update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
 b_prev_f.on_clicked(prev_f)
 
 ax_next_f = plt.axes([0.19, 0.03, 0.13, 0.055])
 b_next_f = Button(ax_next_f, 'Next Falling →')
 def next_f(event):
-    global current_falling_idx
+    global current_falling_idx, manual_mode, manual_meas_offset
     if current_falling_idx < len(meas_falling) - 1:
         current_falling_idx += 1
+        manual_mode = False  # Nollaa manuaalinen tila
+        manual_meas_offset = 0.0  # Nollaa offset
         update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
 b_next_f.on_clicked(next_f)
 
 ax_prev_r = plt.axes([0.35, 0.03, 0.13, 0.055])
 b_prev_r = Button(ax_prev_r, '← Prev Rising')
 def prev_r(event):
-    global current_rising_idx
+    global current_rising_idx, manual_mode, manual_meas_offset
     if current_rising_idx > 0:
         current_rising_idx -= 1
+        manual_mode = False  # Nollaa manuaalinen tila
+        manual_meas_offset = 0.0  # Nollaa offset
         update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
 b_prev_r.on_clicked(prev_r)
 
 ax_next_r = plt.axes([0.49, 0.03, 0.13, 0.055])
 b_next_r = Button(ax_next_r, 'Next Rising →')
 def next_r(event):
-    global current_rising_idx
+    global current_rising_idx, manual_mode, manual_meas_offset
     if current_rising_idx < len(meas_rising) - 1:
         current_rising_idx += 1
+        manual_mode = False  # Nollaa manuaalinen tila
+        manual_meas_offset = 0.0  # Nollaa offset
         update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
 b_next_r.on_clicked(next_r)
-
 # Ohjeteksti
 print("\n" + "="*60)
 print("KÄYTTÖOHJEET:")

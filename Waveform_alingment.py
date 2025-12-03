@@ -299,6 +299,7 @@ def fft_frequency_estimate(t, v):
 # PARAMETRIEN LASKENTA
 # ---------------------------------------------------------
 def calculate_params(t, v):
+    
     t = np.asarray(t)
     v = np.asarray(v)
 
@@ -420,33 +421,23 @@ def calculate_params(t, v):
         "undershoot_%": undershoot_pct,
         "settling_ns": settling_ns
     }
+   
 # ---------------------------------------------------------
-# APUFUNKTIO: Automaattinen yksikön skaalaus
+# APUFUNKTIO: Automaattinen yksikön skaalaus Vanha
 # ---------------------------------------------------------
-def format_slew_rate(sr_value):
-    """
-    Muotoilee slew raten ns-aikaskaalaan.
-    Syöte: V/s
-    Palauttaa arvon ja yksikön (V/ns, mV/ns, µV/ns)
-    """
+#def format_slew_rate(sr_value):
 
-    if np.isnan(sr_value):
-        return np.nan, "V/ns"
+    #if np.isnan(sr_value):
+   #     return np.nan, "V/µs"
 
-    # V/s → V/ns muunnos
-    v_per_ns = sr_value / 1e9
+    # Muunna V/s → V/µs
+  #  v_per_us = sr_value / 1e6
 
-    abs_val = abs(v_per_ns)
-
-    if abs_val >= 1:
-        return v_per_ns, "V/ns"
-    elif abs_val >= 1e-3:
-        return v_per_ns * 1e3, "mV/ns"
-    else:
-        return v_per_ns * 1e6, "µV/ns"
+ #   return v_per_us, "V/µs"
 # ---------------------------------------------------------
 # LASKENNAT
 # ---------------------------------------------------------
+#Määritellään signaalin tasot ja 50 % -kynnys
 sim_v_min = original_sim_v.min()
 sim_v_max = original_sim_v.max()
 sim_threshold50 = sim_v_min + 0.5 * (sim_v_max - sim_v_min)
@@ -455,14 +446,19 @@ meas_v_min = original_meas_v.min()
 meas_v_max = original_meas_v.max()
 meas_threshold50 = meas_v_min + 0.5 * (meas_v_max - meas_v_min)
 
-swing = meas_v_max - meas_v_min
+swing = meas_v_max - meas_v_min#Signaalin swing eli amplitudi
 
 # Hae kaikki reunat molemmista signaaleista
 meas_rising  = find_transition_times(original_meas_time, original_meas_v, meas_threshold50, rising=True)
-meas_falling = find_transition_times(original_meas_time, original_meas_v, meas_threshold50)
+meas_falling = find_transition_times(original_meas_time, original_meas_v, meas_threshold50,rising=False)
 sim_rising   = find_transition_times(original_sim_time, original_sim_v, sim_threshold50,rising=True)
 sim_falling  = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=False)
 # Edge-aware suodatus
+#Suodattaa kohinaa, mutta ei koske kriittisiin kohtiin:
+#ei silota 200 ns sisällä nousua (10–90 %)
+#ei silota 200 ns sisällä laskua
+#ei koske reunan jyrkimpään kohtaan
+#silottaa vain tasaisia alueita (flat high, flat low)
 original_meas_v = smart_filter(
     original_meas_time,
     original_meas_v_raw,
@@ -487,14 +483,19 @@ p_sim  = calculate_params(original_sim_time,  original_sim_v)
 
 
 # Parametrit
-p_meas = calculate_params(original_meas_time, original_meas_v)
-p_sim  = calculate_params(original_sim_time,  original_sim_v)
+#p_meas = calculate_params(original_meas_time, original_meas_v)
+#p_sim  = calculate_params(original_sim_time,  original_sim_v)
 
-# Formatoi slew rate -arvot
-sr_rise_meas_val, sr_rise_meas_unit = format_slew_rate(p_meas['slew_rate_rise'])
-sr_fall_meas_val, sr_fall_meas_unit = format_slew_rate(p_meas['slew_rate_fall'])
-sr_rise_sim_val, sr_rise_sim_unit = format_slew_rate(p_sim['slew_rate_rise'])
-sr_fall_sim_val, sr_fall_sim_unit = format_slew_rate(p_sim['slew_rate_fall'])
+# Formatoi slew rate -arvot Slew rate yksiköiden muunnos
+sr_rise_meas_val = p_meas['slew_rate_rise'] / 1e6
+sr_fall_meas_val = p_meas['slew_rate_fall'] / 1e6
+sr_rise_sim_val  = p_sim['slew_rate_rise']  / 1e6
+sr_fall_sim_val  = p_sim['slew_rate_fall']  / 1e6
+
+sr_rise_meas_unit = "V/µs"
+sr_fall_meas_unit = "V/µs"
+sr_rise_sim_unit  = "V/µs"
+sr_fall_sim_unit  = "V/µs"
 
 params_text = f"""Waveform parameters (SDA INC74024)
 
@@ -507,8 +508,8 @@ V_max [V]         {p_meas['V_max']:>10.3f}    {p_sim['V_max']:>10.3f}
 V_min [V]         {p_meas['V_min']:>10.3f}    {p_sim['V_min']:>10.3f}
 Rise time [ns]    {p_meas['rise_ns']:>10.1f}    {p_sim['rise_ns']:>10.1f}
 Fall time [ns]    {p_meas['fall_ns']:>10.1f}    {p_sim['fall_ns']:>10.1f}
-Slew rise [{sr_rise_meas_unit}]  {sr_rise_meas_val:>10.3f}   {sr_rise_sim_val:>10.3f}
-Slew fall [{sr_fall_meas_unit}]  {sr_fall_meas_val:>10.3f}   {sr_fall_sim_val:>10.3f}
+Slew rise [{sr_rise_meas_unit}]   {sr_rise_meas_val:>12.3f}   {sr_rise_sim_val:>12.3f}
+Slew fall [{sr_fall_meas_unit}]   {sr_fall_meas_val:>12.3f}   {sr_fall_sim_val:>12.3f}
 Overshoot [%]     {p_meas['overshoot_%']:>10.1f}    {p_sim['overshoot_%']:>10.1f}
 Undershoot [%]    {p_meas['undershoot_%']:>10.1f}    {p_sim['undershoot_%']:>10.1f}
 Duty [%]          {p_meas['duty_%']:>10.1f}    {p_sim['duty_%']:>10.1f}
@@ -526,19 +527,23 @@ current_falling_idx = 0
 current_rising_idx = 0
 current_edge_time = 0.0
 current_sim_offset = 0.0
-manual_meas_offset = 0.0  # UUSI: Manuaalinen offset mittaukselle
-manual_mode = False  # UUSI: Manuaalinen säätötila
+manual_meas_offset = 0.0  #  Manuaalinen offset mittaukselle
+manual_mode = False  #  Manuaalinen säätötila
 
 fig = plt.figure(figsize=(16, 12))
-fig.subplots_adjust(bottom=0.12, top=0.95, hspace=0.3)  # Palautettu alkuperäinen
+fig.subplots_adjust(bottom=0.12, top=0.95, hspace=0.3)  
 
 ax = fig.add_subplot(2, 1, 1)
 ax_params = fig.add_subplot(2, 1, 2)
 ax_params.axis('off')
-
+print("sim_falling edges =", sim_falling[:10])
+print("sim_rising edges  =", sim_rising[:10])
+print("len(sim_falling) =", len(sim_falling))
+print("len(sim_rising)  =", len(sim_rising))
 def update_plot(meas_edge_time, edge_type, edge_num):
     global current_edge_time, current_sim_offset
     global manual_meas_offset, manual_mode
+
 
     current_edge_time = meas_edge_time
 
@@ -728,7 +733,7 @@ def on_full_view(event):
     ax.set_xlim(min_x - margin, max_x + margin)
     fig.canvas.draw_idle()
 
-# MUUTOS: Tämä rivi puuttui koodistasi ja kytkee napin toimintaan
+# Kytkee napin toimintaan
 b_full.on_clicked(on_full_view)
 
 # Alustava piirto
@@ -806,7 +811,6 @@ elif NOISE_FILTER_METHOD != 'none':
     print(f"  - Ikkuna: {NOISE_FILTER_WINDOW} pistettä")
     if NOISE_FILTER_METHOD == 'savgol':
         print(f"  - Polynomin aste: {NOISE_FILTER_POLYORDER}")
-    print("  - Raakadata näkytetään haalealla viivalla vertailua varten")
 print("="*60)
 print("\n VINKKI: Aseta NOISE_FILTER_METHOD = 'auto_optimize'")
 print("   koodin alussa optimoidaksesi suodatin automaattisesti!")

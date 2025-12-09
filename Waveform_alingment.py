@@ -6,10 +6,7 @@ from matplotlib.widgets import Button
 from scipy.signal import find_peaks
 import os
 
-#tiedosto nimen lyhennys
-def short_name(fname, maxlen=25):
-    base = os.path.basename(fname)
-    return base if len(base) <= maxlen else base[:maxlen-3] + "..."
+
 
 # ---------------------------------------------------------
 # TIEDOSTOT
@@ -379,11 +376,11 @@ manual_mode = False
 
 fig = plt.figure(figsize=(16, 12))
 fig.subplots_adjust(bottom=0.12, top=0.95, hspace=0.3)  
-
+gs = fig.add_gridspec(3, 3, height_ratios=[3, 1, 2])
 ax = fig.add_subplot(2, 1, 1)
 ax_params = fig.add_subplot(2, 1, 2)
 ax_params.axis('off')
-
+ax2 = fig.add_subplot(gs[2, 1:3])
 def update_plot(meas_edge_time, edge_type, edge_num):
     global current_edge_time, current_sim_offset
     global manual_meas_offset, manual_mode
@@ -416,7 +413,7 @@ def update_plot(meas_edge_time, edge_type, edge_num):
     meas_shifted = original_meas_time - meas_edge_time + total_meas_offset
 
     # ========================================
-    # UUSI: LASKE PARAMETRIT AIKAIKKUNASTA
+    #  LASKETAAN PARAMETRIT AIKAIKKUNASTA
     # ========================================
     window_margin = view_window * 1.5  # Hieman laajempi ikkuna parametreille
     
@@ -470,8 +467,7 @@ def update_plot(meas_edge_time, edge_type, edge_num):
     
     # Luo parametritaulukko dynaamisesti
     params_text = f"""Waveform parameters (SDA INC74024)
-Aikaikkunan parametrit: ±{window_margin*1e6:.1f} µs reunan ympäriltä
-
+    Aikaikkunan parametrit: ±{window_margin*1e6:.1f} µs reunan ympäriltä
 
 Parameter             Meas.          Sim.
 ---------------------------------------------------
@@ -495,16 +491,23 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
     # PIIRTO
     # ========================================
     ax.cla()
-
+    ax2.cla()
     ax.plot(meas_shifted, original_meas_v,
             color="red", linewidth=2.5,
-            label=f"Meas SDA ({short_name(meas_file)})",
+            label=f"Meas SDA ({meas_file})",
             alpha=0.9)
 
     ax.plot(sim_shifted, original_sim_v,
             color="blue", linewidth=2,
-            label=f"Sim SDA ({short_name(sim_file)})",
+            label=f"Sim SDA ({sim_file})",
             alpha=0.9)
+    ax2.plot(meas_shifted, original_meas_v,
+             color="red", linewidth=2,
+             alpha=0.9)
+    
+    ax2.plot(sim_shifted, original_sim_v,
+             color="blue", linewidth=2,
+             alpha=0.7)
 
     # Muut simulaatiosarakkeet
     for col in sim_df.columns:
@@ -525,10 +528,12 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
         ax.scatter(ts, vs, marker='o', s=60, color="magenta",
                    zorder=6, edgecolor="white", linewidth=1)
 
-    # Akseliasetukset
+   # Akseliasetukset
     ax.xaxis.set_major_formatter(EngFormatter(unit='s'))
     ax.yaxis.set_major_formatter(EngFormatter(unit='V'))
-    ax.set_xlabel("Aika (kohdistettu reunaan t=0)", fontsize=11)
+    ax2.xaxis.set_major_formatter(EngFormatter(unit='s'))  
+    ax2.yaxis.set_major_formatter(EngFormatter(unit='V'))  
+    ax.set_xlabel("Time (aligned to the edge t=0)", fontsize=8)  
     ax.set_ylabel("Voltage", fontsize=11)
 
     time_diff_ns = current_sim_offset * 1e9
@@ -539,13 +544,14 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
     )
 
     ax.grid(True, alpha=0.3)
-    ax.legend(bbox_to_anchor=(-0.11, -1.0), loc='upper left', fontsize=10, framealpha=0.95)
+    ax2.grid(True, alpha=0.3)
+    ax.legend(bbox_to_anchor=(0.6, -0.13), loc='upper center', fontsize=10, framealpha=0.95)
 
     # Parametritaulukko
     ax_params.cla()
     ax_params.axis('off')
     ax_params.text(
-        0.5, 0.5, params_text,
+        0.04, 0.4, params_text,
         transform=ax_params.transAxes,
         va='center', ha='center',
         fontfamily='monospace', fontsize=10,
@@ -613,7 +619,7 @@ def on_key(event):
 fig.canvas.mpl_connect('key_press_event', on_key)
 
 # Full View -nappi
-ax_full = plt.axes([0.65, 0.03, 0.15, 0.055])
+ax_full = plt.axes([0.86, 0.39, 0.13, 0.055])
 b_full = Button(ax_full, 'Full View')
 def on_full_view(event):
     global current_edge_time, current_sim_offset, manual_meas_offset
@@ -644,7 +650,7 @@ else:
 # ---------------------------------------------------------
 # NAPPIEN LUONTI
 # ---------------------------------------------------------
-ax_prev_f = plt.axes([0.05, 0.03, 0.13, 0.055])
+ax_prev_f = plt.axes([0.320, 0.39, 0.13, 0.055])
 b_prev_f = Button(ax_prev_f, '← Prev Falling')
 def prev_f(event):
     global current_falling_idx, manual_mode, manual_meas_offset
@@ -655,7 +661,7 @@ def prev_f(event):
         update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
 b_prev_f.on_clicked(prev_f)
 
-ax_next_f = plt.axes([0.19, 0.03, 0.13, 0.055])
+ax_next_f = plt.axes([0.456, 0.39, 0.13, 0.055])
 b_next_f = Button(ax_next_f, 'Next Falling →')
 def next_f(event):
     global current_falling_idx, manual_mode, manual_meas_offset
@@ -666,7 +672,7 @@ def next_f(event):
         update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
 b_next_f.on_clicked(next_f)
 
-ax_prev_r = plt.axes([0.35, 0.03, 0.13, 0.055])
+ax_prev_r = plt.axes([0.590, 0.39, 0.13, 0.055])
 b_prev_r = Button(ax_prev_r, '← Prev Rising')
 def prev_r(event):
     global current_rising_idx, manual_mode, manual_meas_offset
@@ -677,7 +683,7 @@ def prev_r(event):
         update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
 b_prev_r.on_clicked(prev_r)
 
-ax_next_r = plt.axes([0.49, 0.03, 0.13, 0.055])
+ax_next_r = plt.axes([0.724, 0.39, 0.13, 0.055])
 b_next_r = Button(ax_next_r, 'Next Rising →')
 def next_r(event):
     global current_rising_idx, manual_mode, manual_meas_offset
@@ -702,8 +708,6 @@ print(f"  - Ikkuna: {NOISE_FILTER_WINDOW} pistettä")
 if NOISE_FILTER_METHOD == 'savgol':
     print(f"  - Polynomin aste: {NOISE_FILTER_POLYORDER}")
 print("="*60)
-print("\nUUSI OMINAISUUS: Parametrit päivittyvät automaattisesti")
-print("kun siirryt seuraavaan reunaan!")
 print("="*60 + "\n")
 
 plt.show()

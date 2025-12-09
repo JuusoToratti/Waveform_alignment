@@ -5,14 +5,27 @@ from matplotlib.ticker import EngFormatter
 from matplotlib.widgets import Button
 from scipy.signal import find_peaks
 import os
+import sys
 
+# ---------------------------------------------------------
+# PyInstaller EXE -polkujen hallinta
+# ---------------------------------------------------------
+def resource_path(relative_path):
+    """Löytää tiedoston oikein, toimii sekä .py että .exe"""
+    try:
+        base_path = sys._MEIPASS  # PyInstallerin tilapäiskansio
+    except Exception:
+        base_path = os.path.abspath(".")  # Normaali ympäristö
+    return os.path.join(base_path, relative_path)
 
 
 # ---------------------------------------------------------
 # TIEDOSTOT
 # ---------------------------------------------------------
-sim_file = "I2C_all.csv"
-meas_file = "REGRESSION_ AREC_X21_MADE2_I2C_1-I2C_0_P1V8(1) SDA-INC74024-2593-55585.csv"
+sim_file = resource_path("I2C_all.csv")
+meas_file = resource_path("REGRESSION_ AREC_X21_MADE2_I2C_1-I2C_0_P1V8(1) SDA-INC74024-2593-55585.csv")
+
+
 
 # ---------------------------------------------------------
 # KOHINANPOISTO
@@ -111,7 +124,18 @@ original_meas_time = meas_df["Time"].copy()
 original_sim_time  = sim_df["Time"].copy()
 
 original_meas_v_raw = meas_df["Voltage"].copy()
-sim_sda_col = next(c for c in sim_df.columns if "INC74024" in str(c))
+
+# Lista kaikista simulaatiokäyristä (paitsi Time)
+available_sim_columns = [c for c in sim_df.columns if c != "Time"]
+current_sim_column_idx = 0
+
+# Valitse ensimmäinen sarake jossa on "INC74024" tai ensimmäinen saatavilla oleva
+try:
+    sim_sda_col = next(c for c in available_sim_columns if "INC74024" in str(c))
+    current_sim_column_idx = available_sim_columns.index(sim_sda_col)
+except StopIteration:
+    sim_sda_col = available_sim_columns[0] if available_sim_columns else "Time"
+
 original_sim_v_raw = sim_df[sim_sda_col].copy()
 
 original_meas_v = remove_noise(original_meas_time, original_meas_v_raw, 
@@ -374,6 +398,30 @@ current_sim_offset = 0.0
 manual_meas_offset = 0.0
 manual_mode = False
 
+def update_sim_signal(new_idx):
+    """Päivittää käytettävän simulaatiokäyrän"""
+    global current_sim_column_idx, sim_sda_col, original_sim_v_raw, original_sim_v
+    global sim_rising, sim_falling, sim_threshold50, sim_v_min, sim_v_max
+    
+    current_sim_column_idx = new_idx
+    sim_sda_col = available_sim_columns[current_sim_column_idx]
+    original_sim_v_raw = sim_df[sim_sda_col].copy()
+    original_sim_v = original_sim_v_raw.copy()
+    
+    if hasattr(original_sim_v_raw, 'index'):
+        original_sim_v = pd.Series(original_sim_v, index=original_sim_v_raw.index)
+    
+    # Laske uudet kynnysarvot ja reunat
+    sim_v_min = original_sim_v.min()
+    sim_v_max = original_sim_v.max()
+    sim_threshold50 = sim_v_min + 0.5 * (sim_v_max - sim_v_min)
+    
+    sim_rising = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=True)
+    sim_falling = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=False)
+    
+    print(f"Vaihdettu simulaatiokäyrään: {sim_sda_col}")
+    print(f"  Käyrä {current_sim_column_idx + 1}/{len(available_sim_columns)}")
+
 fig = plt.figure(figsize=(16, 12))
 fig.subplots_adjust(bottom=0.12, top=0.95, hspace=0.3)  
 gs = fig.add_gridspec(3, 3, height_ratios=[3, 1, 2])
@@ -459,14 +507,14 @@ def update_plot(meas_edge_time, edge_type, edge_num):
         sim_window_t, sim_window_v, sim_falling_window, swing
     )
     
-    # Slew rate yksikköjen muunnos
+    # Slew rate yksiköiden muunnos
     sr_rise_meas_val = p_meas['slew_rate_rise'] / 1e6
     sr_fall_meas_val = p_meas['slew_rate_fall'] / 1e6
     sr_rise_sim_val  = p_sim['slew_rate_rise']  / 1e6
     sr_fall_sim_val  = p_sim['slew_rate_fall']  / 1e6
     
     # Luo parametritaulukko dynaamisesti
-    params_text = f"""Waveform parameters (SDA INC74024)
+    params_text = f"""Waveform parameters ({sim_sda_col})
     Aikaikkunan parametrit: ±{window_margin*1e6:.1f} µs reunan ympäriltä
 
 Parameter             Meas.          Sim.
@@ -538,8 +586,9 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
 
     time_diff_ns = current_sim_offset * 1e9
     title_suffix = f" [MANUAL: {manual_meas_offset*1e9:.1f} ns]" if manual_mode else ""
+    signal_info = f" | Signal: {sim_sda_col} ({current_sim_column_idx + 1}/{len(available_sim_columns)})"
     ax.set_title(
-        f"I2C SDA – Align to {edge_type} edge #{edge_num}  (Δt = {time_diff_ns:.1f} ns){title_suffix}",
+        f"I2C SDA – Align to {edge_type} edge #{edge_num}  (Δt = {time_diff_ns:.1f} ns){title_suffix}{signal_info}",
         fontsize=13, fontweight='bold'
     )
 
@@ -615,6 +664,22 @@ def on_key(event):
     
     elif event.key == 's':
         print(f"Current manual offset: {manual_meas_offset*1e9:.2f} ns")
+    
+    elif event.key == 'p':
+        if current_sim_column_idx > 0:
+            update_sim_signal(current_sim_column_idx - 1)
+            if current_falling_idx < len(meas_falling):
+                update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
+            elif current_rising_idx < len(meas_rising):
+                update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
+    
+    elif event.key == 'n':
+        if current_sim_column_idx < len(available_sim_columns) - 1:
+            update_sim_signal(current_sim_column_idx + 1)
+            if current_falling_idx < len(meas_falling):
+                update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
+            elif current_rising_idx < len(meas_rising):
+                update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
 
 fig.canvas.mpl_connect('key_press_event', on_key)
 
@@ -635,6 +700,31 @@ def on_full_view(event):
     fig.canvas.draw_idle()
 
 b_full.on_clicked(on_full_view)
+
+# Signal selection -napit
+ax_prev_sig = plt.axes([0.86, 0.51, 0.13, 0.055])
+b_prev_sig = Button(ax_prev_sig, '↑ Prev Signal')
+def prev_signal(event):
+    global current_sim_column_idx
+    if current_sim_column_idx > 0:
+        update_sim_signal(current_sim_column_idx - 1)
+        if current_falling_idx < len(meas_falling):
+            update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
+        elif current_rising_idx < len(meas_rising):
+            update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
+b_prev_sig.on_clicked(prev_signal)
+
+ax_next_sig = plt.axes([0.86, 0.45, 0.13, 0.055])
+b_next_sig = Button(ax_next_sig, '↓ Next Signal')
+def next_signal(event):
+    global current_sim_column_idx
+    if current_sim_column_idx < len(available_sim_columns) - 1:
+        update_sim_signal(current_sim_column_idx + 1)
+        if current_falling_idx < len(meas_falling):
+            update_plot(meas_falling[current_falling_idx], "falling", current_falling_idx + 1)
+        elif current_rising_idx < len(meas_rising):
+            update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
+b_next_sig.on_clicked(next_signal)
 
 # Alustava piirto
 if len(meas_falling) > 0:
@@ -702,6 +792,11 @@ print("← →  : Siirrä mittausta 10 ns kerrallaan")
 print("Shift + ← →  : Siirrä mittausta 1 ns kerrallaan")
 print("R    : Nollaa manuaalinen offset")
 print("S    : Tulosta nykyinen offset konsoliin")
+print("P    : Edellinen simulaatiokäyrä")
+print("N    : Seuraava simulaatiokäyrä")
+print("="*60)
+print(f"SIMULAATIOKÄYRÄT: {len(available_sim_columns)} käyrää saatavilla")
+print(f"Aktiivinen: {sim_sda_col} ({current_sim_column_idx + 1}/{len(available_sim_columns)})")
 print("="*60)
 print(f"KOHINANPOISTO: {NOISE_FILTER_METHOD}")
 print(f"  - Ikkuna: {NOISE_FILTER_WINDOW} pistettä")

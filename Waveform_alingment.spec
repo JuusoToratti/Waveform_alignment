@@ -5,7 +5,7 @@ a = Analysis(
     ['Waveform_alingment.py'],
     pathex=[],
     binaries=[],
-    datas=[('I2C_all.csv', '.'), ('REGRESSION_ AREC_X21_MADE2_I2C_1-I2C_0_P1V8(1) SDA-INC74024-2593-55585.csv', '.')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

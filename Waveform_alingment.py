@@ -9,10 +9,10 @@ import os
 import sys
 
 # ---------------------------------------------------------
-# PyInstaller EXE -polkujen hallinta
+# PyInstaller EXE path management
 # ---------------------------------------------------------
 def resource_path(relative_path):
-    """Löytää tiedoston oikein, toimii sekä .py että .exe"""
+    """Finds the file correctly, works with both .py and .exe"""
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -20,12 +20,12 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 # ---------------------------------------------------------
-# AUTOMAATTINEN CSV-FORMAATIN TUNNISTUS
+# AUTOMATIC CSV FORMAT DETECTION
 # ---------------------------------------------------------
 def detect_csv_format(filepath, max_lines=50):
-    """Tunnistaa CSV-tiedoston formaatin automaattisesti"""
+    """Detects CSV file format automatically"""
     print(f"\n{'='*60}")
-    print(f"Analysoidaan tiedostoa: {os.path.basename(filepath)}")
+    print(f"Analyzing file: {os.path.basename(filepath)}")
     print(f"{'='*60}")
     
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -109,19 +109,19 @@ def detect_csv_format(filepath, max_lines=50):
                     'score': score
                 }
     
-    print(f"  Erotin: '{best_config['separator']}'")
-    print(f"  Desimaalierotin: '{best_config['decimal']}'")
-    print(f"  Headerit: {'Kyllä' if best_config['has_header'] else 'Ei'}")
+    print(f"  Separator: '{best_config['separator']}'")
+    print(f"  Decimal separator: '{best_config['decimal']}'")
+    print(f"  Headers: {'Yes' if best_config['has_header'] else 'No'}")
     if best_config['has_header']:
-        print(f"  Header-rivi: {best_config['header_row']}")
-    print(f"  Sarakkeiden määrä: {best_config['num_columns']}")
-    print(f"  Luotettavuuspisteet: {best_config['score']}")
+        print(f"  Header row: {best_config['header_row']}")
+    print(f"  Number of columns: {best_config['num_columns']}")
+    print(f"  Confidence score: {best_config['score']}")
     print(f"{'='*60}\n")
     
     return best_config
 
 def load_measurement_file(filepath):
-    """Lataa mittaustiedoston automaattisella tunnistuksella"""
+    """Load measurement file with automatic detection"""
     config = detect_csv_format(filepath)
     
     try:
@@ -164,20 +164,20 @@ def load_measurement_file(filepath):
         result_df['Voltage'] = pd.to_numeric(df[voltage_col], errors='coerce')
         result_df = result_df.dropna().reset_index(drop=True)
         
-        print(f"✓ Mittaustiedosto ladattu: {len(result_df)} pistettä")
-        print(f"  Time-sarake: {time_col}")
-        print(f"  Voltage-sarake: {voltage_col}")
-        print(f"  Aikaväli: {result_df['Time'].min():.2e} - {result_df['Time'].max():.2e} s")
-        print(f"  Jänniteväli: {result_df['Voltage'].min():.3f} - {result_df['Voltage'].max():.3f} V\n")
+        print(f"  Measurement file loaded: {len(result_df)} points")
+        print(f"  Time column: {time_col}")
+        print(f"  Voltage column: {voltage_col}")
+        print(f"  Time range: {result_df['Time'].min():.2e} - {result_df['Time'].max():.2e} s")
+        print(f"  Voltage range: {result_df['Voltage'].min():.3f} - {result_df['Voltage'].max():.3f} V\n")
         
         return result_df, voltage_col
         
     except Exception as e:
-        print(f"✗ VIRHE mittaustiedoston lataamisessa: {e}")
+        print(f" ERROR loading measurement file: {e}")
         raise
 
 def load_simulation_file(filepath):
-    """Lataa simulaatiotiedoston automaattisella tunnistuksella"""
+    """Load simulation file with automatic detection"""
     config = detect_csv_format(filepath, max_lines=100)
     
     headers = None
@@ -193,7 +193,7 @@ def load_simulation_file(filepath):
         if any('time' in str(f).lower() for f in fields):
             headers = fields
             data_start_row = i + 1
-            print(f"  Löydettiin Time-header riviltä {i}")
+            print(f"  Found Time header at row {i}")
             break
     
     try:
@@ -229,7 +229,7 @@ def load_simulation_file(filepath):
         available_columns = [c for c in df.columns if c != 'Time']
         
         if not available_columns:
-            raise ValueError("Ei löydetty yhtään signaalisaraketta!")
+            raise ValueError("No signal columns found!")
         
         variances = {}
         for col in available_columns:
@@ -239,27 +239,27 @@ def load_simulation_file(filepath):
         
         if variances:
             default_signal = max(variances, key=variances.get)
-            print(f"  Aktiivisin signaali: {default_signal} (varianssi: {variances[default_signal]:.2e})")
+            print(f"  The most active signal: {default_signal} (variance: {variances[default_signal]:.2e})")
         else:
             default_signal = available_columns[0]
-            print(f"  Oletussignaali: {default_signal}")
+            print(f"  Default signal: {default_signal}")
         
-        print(f"✓ Simulaatiotiedosto ladattu: {len(df)} pistettä")
-        print(f"  Saatavilla olevat signaalit: {len(available_columns)} kpl")
-        print(f"  Time-sarake löydetty: {'Time' in df.columns}")
-        print(f"  Aikaväli: {df['Time'].min():.2e} - {df['Time'].max():.2e} s\n")
+        print(f"  Simulation file loaded: {len(df)} points")
+        print(f"  Available signals: {len(available_columns)} pcs")
+        print(f"  Time column found: {'Time' in df.columns}")
+        print(f"  Time range: {df['Time'].min():.2e} - {df['Time'].max():.2e} s\n")
         
         return df, available_columns, default_signal
         
     except Exception as e:
-        print(f"✗ VIRHE simulaatiotiedoston lataamisessa: {e}")
+        print(f" ERROR loading simulation file: {e}")
         raise
 
 # ---------------------------------------------------------
-# KOHINANPOISTO
+# NOISE CANCELLATION
 # ---------------------------------------------------------
 def remove_noise(t, v, method='savgol', window=11, polyorder=3):
-    """Poistaa kohinaa signaalista."""
+    """Removes noise from the signal."""
     if method == 'none':
         return v
     
@@ -285,7 +285,7 @@ NOISE_FILTER_WINDOW = 11
 NOISE_FILTER_POLYORDER = 3
 
 def smart_filter(t, v, rising_edges, falling_edges, window=11, polyorder=3, guard_ns=200):
-    """Suodattaa kohinaa, mutta EI koske reunoihin."""
+    """Filters noise, but does NOT affect edges."""
     t = np.asarray(t)
     v = np.asarray(v).copy()
     guard_s = guard_ns * 1e-9
@@ -304,7 +304,7 @@ def smart_filter(t, v, rising_edges, falling_edges, window=11, polyorder=3, guar
     return v
 
 # ---------------------------------------------------------
-# REUNOJEN ETSINTÄ
+# FINDING EDGES
 # ---------------------------------------------------------
 def find_transition_times(t, v, level, rising=True):
     t = np.asarray(t)
@@ -324,7 +324,7 @@ def find_transition_times(t, v, level, rising=True):
     return np.array(times)
 
 def detect_non_monotonicity(t, v, falling_times, swing, window_ns=200e-9, min_ampl_pct=5):
-    """Tunnistaa non-monotoniset reunat."""
+    """Identify non-monotonic edges."""
     considerable = 0
     markers = []
     min_ampl = (min_ampl_pct / 100.0) * swing 
@@ -356,7 +356,7 @@ def detect_non_monotonicity(t, v, falling_times, swing, window_ns=200e-9, min_am
     return considerable, markers
 
 def find_closest_sim_edge(meas_edge_time, sim_edges, max_distance=10e-6):
-    """Etsi lähin simulointiKÄYRÄN reuna mittausreunan läheisyydestä"""
+    """Find the nearest simulation curve edge near the measurement edge"""
     if len(sim_edges) == 0:
         return None
     distances = np.abs(sim_edges - meas_edge_time)
@@ -366,7 +366,7 @@ def find_closest_sim_edge(meas_edge_time, sim_edges, max_distance=10e-6):
     return None
 
 def fft_frequency_estimate(t, v):
-    """Taajuuden estimointi FFT:n avulla"""
+    """Frequency estimation using FFT"""
     t = np.asarray(t)
     v = np.asarray(v)
     v = v - np.mean(v)
@@ -391,10 +391,10 @@ def fft_frequency_estimate(t, v):
     return freq / 1e3
 
 # ---------------------------------------------------------
-# PARAMETRIEN LASKENTA
+# CALCULATION OF PARAMETERS
 # ---------------------------------------------------------
 def calculate_params(t, v):
-    """Laskee parametrit annetusta aikaikkunasta"""
+    """Calculates parameters from a given time window"""
     t = np.asarray(t)
     v = np.asarray(v)
 
@@ -499,7 +499,7 @@ def calculate_params(t, v):
     }
 
 # ---------------------------------------------------------
-# GLOBAALIT MUUTTUJAT
+# GLOBAL VARIABLES
 # ---------------------------------------------------------
 sim_df = None
 meas_df = None
@@ -544,10 +544,10 @@ ax_params = None
 ax2 = None
 
 # ---------------------------------------------------------
-# TIEDOSTON LATAUS FUNKTIOT
+# FILE DOWNLOAD FUNCTIONS
 # ---------------------------------------------------------
 def reinitialize_analysis():
-    """Uudelleenlaskee kaiken kun tiedostot on ladattu"""
+    """Recalculates everything after files are loaded"""
     global original_sim_time, original_meas_time
     global original_sim_v_raw, original_meas_v_raw
     global original_sim_v, original_meas_v
@@ -560,20 +560,20 @@ def reinitialize_analysis():
     if sim_df is None or meas_df is None:
         return
     
-    # Reset offsetit
+    # Reset offsets
     manual_meas_offset = 0.0
     manual_mode = False
     current_falling_idx = 0
     current_rising_idx = 0
     
-    # Kopioi ajat ja jännitteet
+    # Copy times and voltages
     original_sim_time = sim_df["Time"].copy()
     original_meas_time = meas_df["Time"].copy()
     
     original_meas_v_raw = meas_df["Voltage"].copy()
     original_sim_v_raw = sim_df[sim_sda_col].copy()
     
-    # Kohinanpoisto mittaukselle
+    #Noise reduction for measurement
     original_meas_v = remove_noise(original_meas_time, original_meas_v_raw, 
                                    method=NOISE_FILTER_METHOD, 
                                    window=NOISE_FILTER_WINDOW,
@@ -585,7 +585,7 @@ def reinitialize_analysis():
     if hasattr(original_sim_v_raw, 'index'):
         original_sim_v = pd.Series(original_sim_v, index=original_sim_v_raw.index)
     
-    # Laske kynnysarvot
+    # Calculate thresholds
     sim_v_min = original_sim_v.min()
     sim_v_max = original_sim_v.max()
     sim_threshold50 = sim_v_min + 0.5 * (sim_v_max - sim_v_min)
@@ -596,13 +596,13 @@ def reinitialize_analysis():
     
     swing = meas_v_max - meas_v_min
     
-    # Hae reunat
+    # Get the edges
     meas_rising = find_transition_times(original_meas_time, original_meas_v, meas_threshold50, rising=True)
     meas_falling = find_transition_times(original_meas_time, original_meas_v, meas_threshold50, rising=False)
     sim_rising = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=True)
     sim_falling = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=False)
     
-    # Edge-aware suodatus
+    # Edge-aware filtering
     original_meas_v = smart_filter(
         original_meas_time,
         original_meas_v_raw,
@@ -613,18 +613,18 @@ def reinitialize_analysis():
         guard_ns=200
     )
     
-    print(f"✓ Analyysi päivitetty")
-    print(f"  Mittaus reunat: {len(meas_rising)} nousevaa, {len(meas_falling)} laskevaa")
-    print(f"  Simulaatio reunat: {len(sim_rising)} nousevaa, {len(sim_falling)} laskevaa\n")
+    print(f" Analysis updated")
+    print(f"  Measuring edges: {len(meas_rising)} rising, {len(meas_falling)} falling")
+    print(f"  Simulation edges: {len(sim_rising)} rising, {len(sim_falling)} falling\n")
     
-    # Päivitä näkymä
+    # Refresh the view
     if len(meas_falling) > 0:
         update_plot(meas_falling[0], "falling", 1)
     elif len(meas_rising) > 0:
         update_plot(meas_rising[0], "rising", 1)
 
 def load_new_measurement():
-    """Lataa uuden mittaustiedoston"""
+    """Download a new measurement file"""
     global meas_df, meas_file, meas_sda_col
     
     root = Tk()
@@ -632,7 +632,7 @@ def load_new_measurement():
     root.attributes('-topmost', True)
     
     filepath = filedialog.askopenfilename(
-        title="Valitse mittaustiedosto (Measurement)",
+        title="Select the measurement file (Measurement)",
         filetypes=[
             ("CSV files", "*.csv"),
             ("Text files", "*.txt"),
@@ -642,7 +642,7 @@ def load_new_measurement():
     root.destroy()
     
     if not filepath:
-        print("Tiedoston valinta peruutettu")
+        print("File selection canceled")
         return
     
     try:
@@ -652,13 +652,13 @@ def load_new_measurement():
         if sim_df is not None:
             reinitialize_analysis()
         
-        print("✓ Mittaustiedosto vaihdettu onnistuneesti!\n")
+        print("Measurement file successfully changed!\n")
         
     except Exception as e:
-        print(f"✗ Virhe ladattaessa mittaustiedostoa: {e}\n")
+        print(f" Error loading measurement file: {e}\n")
 
 def load_new_simulation():
-    """Lataa uuden simulaatiotiedoston"""
+    """Load a new simulation file"""
     global sim_df, sim_file, available_sim_columns, sim_sda_col, current_sim_column_idx
     
     root = Tk()
@@ -666,7 +666,7 @@ def load_new_simulation():
     root.attributes('-topmost', True)
     
     filepath = filedialog.askopenfilename(
-        title="Valitse simulaatiotiedosto (Simulation)",
+        title="Select the simulation file(Simulation)",
         filetypes=[
             ("CSV files", "*.csv"),
             ("Text files", "*.txt"),
@@ -676,7 +676,7 @@ def load_new_simulation():
     root.destroy()
     
     if not filepath:
-        print("Tiedoston valinta peruutettu")
+        print("File selection canceled")
         return
     
     try:
@@ -687,16 +687,16 @@ def load_new_simulation():
         if meas_df is not None:
             reinitialize_analysis()
         
-        print("✓ Simulaatiotiedosto vaihdettu onnistuneesti!\n")
+        print(" Simulation file changed successfully!\n")
         
     except Exception as e:
-        print(f"✗ Virhe ladattaessa simulaatiotiedostoa: {e}\n")
+        print(f" Error loading simulation file: {e}\n")
 
 # ---------------------------------------------------------
-# PLOTTING FUNKTIOT
+#PLOTTING FUNCTIONS
 # ---------------------------------------------------------
 def update_sim_signal(new_idx):
-    """Päivittää käytettävän simulaatiokäyrän"""
+    """Updates the simulation curve being used"""
     global current_sim_column_idx, sim_sda_col, original_sim_v_raw, original_sim_v
     global sim_rising, sim_falling, sim_threshold50, sim_v_min, sim_v_max
     
@@ -718,15 +718,17 @@ def update_sim_signal(new_idx):
     sim_rising = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=True)
     sim_falling = find_transition_times(original_sim_time, original_sim_v, sim_threshold50, rising=False)
     
-    print(f"Vaihdettu simulaatiokäyrään: {sim_sda_col}")
-    print(f"  Käyrä {current_sim_column_idx + 1}/{len(available_sim_columns)}")
-
+    print(f"Switched to simulation curve: {sim_sda_col}")
+    print(f"  curve {current_sim_column_idx + 1}/{len(available_sim_columns)}")
+#==============================================
+#Waveform alignment update function
+#==============================================
 def update_plot(meas_edge_time, edge_type, edge_num):
     global current_edge_time, current_sim_offset
     global manual_meas_offset, manual_mode
     
     if sim_df is None or meas_df is None:
-        print("⚠ Lataa ensin molemmat tiedostot!")
+        print(" Download both files first!")
         return
 
     current_edge_time = meas_edge_time
@@ -799,7 +801,7 @@ def update_plot(meas_edge_time, edge_type, edge_num):
     sr_fall_sim_val  = p_sim['slew_rate_fall']  / 1e6
     
     params_text = f"""Waveform parameters ({sim_sda_col})
-    Aikaikkunan parametrit: ±{window_margin*1e6:.1f} µs reunan ympäriltä
+    Time window parameters: ±{window_margin*1e6:.1f} µs around the edge
 
 Parameter             Meas.          Sim.
 ---------------------------------------------------
@@ -822,7 +824,7 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
     ax.cla()
     ax2.cla()
     
-    # Legendat dynaamisesti tiedostonimien kanssa
+    #Legends dynamically with filenames
     meas_label = f"Meas: {os.path.basename(meas_file)}" if meas_file else "Measurement"
     sim_label = f"Sim: {os.path.basename(sim_file)}" if sim_file else "Simulation"
     
@@ -882,7 +884,7 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
     ax_params.cla()
     ax_params.axis('off')
     ax_params.text(
-        0.01, 0.4, params_text,
+        -0.05, 0.4, params_text,
         transform=ax_params.transAxes,
         va='center', ha='left',
         fontfamily='monospace', fontsize=10,
@@ -894,29 +896,29 @@ Non-monotonic     {nonmono_meas_cnt:>10d}    {nonmono_sim_cnt:>10d}
     fig.canvas.draw_idle()
 
 # ---------------------------------------------------------
-# KÄYTTÖLIITTYMÄ
+#USER INTERFACE
 # ---------------------------------------------------------
 print("\n" + "="*60)
-print("WAVEFORM ALIGNMENT TOOL - Interaktiivinen versio")
+print("WAVEFORM ALIGNMENT TOOL - Interactive version")
 print("="*60)
-print("Lataa tiedostot käyttöliittymän napeilla!")
+print("Download files using the buttons on the interface!")
 print("="*60 + "\n")
 
 fig = plt.figure(figsize=(16, 12))
-fig.subplots_adjust(bottom=0.12, top=0.95, left=0.02, right=0.98, hspace=0.3)
+fig.subplots_adjust(bottom=0.12, top=0.95, left=0.06, right=0.94, hspace=0.3)
 gs = fig.add_gridspec(3, 3, height_ratios=[3, 1, 2])
 ax = fig.add_subplot(2, 1, 1)
 ax_params = fig.add_subplot(2, 1, 2)
 ax_params.axis('off')
 ax2 = fig.add_subplot(gs[2, 1:3])
 
-# Aloitusviesti
-ax.text(0.5, 0.5, 'Lataa tiedostot aloittaaksesi\n\nKäytä "Load Measurement" ja "Load Simulation" -nappeja',
+# Opening message
+ax.text(0.5, 0.5, 'Download the files to get started\n\nUse "Load Measurement" ja "Load Simulation" -buttons',
         ha='center', va='center', fontsize=16, color='gray',
         transform=ax.transAxes)
 
 # ---------------------------------------------------------
-# NÄPPÄIMISTÖKUUNTELIJA
+# KEYBOARD LISTENER
 # ---------------------------------------------------------
 def on_key(event):
     global manual_meas_offset, manual_mode, current_falling_idx, current_rising_idx
@@ -990,16 +992,16 @@ def on_key(event):
 fig.canvas.mpl_connect('key_press_event', on_key)
 
 # ---------------------------------------------------------
-# NAPIT
+# Buttons
 # ---------------------------------------------------------
 
-# TIEDOSTOJEN LATAUS NAPIT (PARAMETRILAATIKON PÄÄLLÄ)
+# Files Download buttons 
 ax_load_meas = plt.axes([0.02, 0.485, 0.10, 0.035])
-b_load_meas = Button(ax_load_meas, '📁 Load Measurement', color='lightcoral', hovercolor='salmon')
+b_load_meas = Button(ax_load_meas, ' Load Measurement', color='lightcoral', hovercolor='salmon')
 b_load_meas.on_clicked(lambda event: load_new_measurement())
 
 ax_load_sim = plt.axes([0.13, 0.485, 0.10, 0.035])
-b_load_sim = Button(ax_load_sim, '📁 Load Simulation', color='lightblue', hovercolor='skyblue')
+b_load_sim = Button(ax_load_sim, ' Load Simulation', color='lightblue', hovercolor='skyblue')
 b_load_sim.on_clicked(lambda event: load_new_simulation())
 
 # FULL VIEW
@@ -1097,25 +1099,25 @@ def next_r(event):
     update_plot(meas_rising[current_rising_idx], "rising", current_rising_idx + 1)
 b_next_r.on_clicked(next_r)
 
-# Ohjeteksti
+# Guidetexts
 print("\n" + "="*60)
-print("KÄYTTÖOHJEET:")
+print("INSTRUCTIONS:")
 print("="*60)
-print("TIEDOSTOJEN LATAUS:")
-print("  📁 Load Measurement - Lataa mittaustiedosto")
-print("  📁 Load Simulation  - Lataa simulaatiotiedosto")
-print("\nNÄPPÄIMET:")
-print("  ← →  : Siirrä mittausta 10 ns kerrallaan")
-print("  Shift + ← →  : Siirrä mittausta 1 ns kerrallaan")
-print("  R    : Nollaa manuaalinen offset")
-print("  S    : Tulosta nykyinen offset konsoliin")
-print("  P    : Edellinen simulaatiokäyrä")
-print("  N    : Seuraava simulaatiokäyrä")
+print("FILE LOADING:")
+print("   Load Measurement - Load measurement file")
+print("   Load Simulation  - Load simulation file")
+print("\nKEYS:")
+print("  ← →  : Move measurement by 10 ns at a time")
+print("  Shift + ← →  : Move measurement by 1 ns at a time")
+print("  R    : Reset manual offset")
+print("  S    : Print current offset to console")
+print("  P    : Previous simulation curve")
+print("  N    : Next simulation curve")
 print("="*60)
-print(f"KOHINANPOISTO: {NOISE_FILTER_METHOD}")
-print(f"  - Ikkuna: {NOISE_FILTER_WINDOW} pistettä")
+print(f"NOISE FILTERING: {NOISE_FILTER_METHOD}")
+print(f"  - Window: {NOISE_FILTER_WINDOW} points")
 if NOISE_FILTER_METHOD == 'savgol':
-    print(f"  - Polynomin aste: {NOISE_FILTER_POLYORDER}")
+    print(f"  - Polynomial order: {NOISE_FILTER_POLYORDER}")
 print("="*60 + "\n")
 
 plt.show()
